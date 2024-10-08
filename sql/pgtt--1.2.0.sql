@@ -172,10 +172,6 @@ BEGIN
 		-- current pid and rows that have been created in the
 		-- current transaction.
 		EXECUTE format('CREATE POLICY pgtt_rls_transaction ON pgtt_schema.pgtt_%s USING (pgtt_sessid = get_session_id() AND xmin::text = txid_current()::text) WITH CHECK (true)', tb_name);
-		
-		-- カスタマイズ：ALTER TABLE追加
-		EXECUTE format('ALTER TABLE pgtt_schema.pgtt_%s ADD COLUMN pgtt_txid text DEFAULT txid_current()', tb_name);
-		
 	END IF;
 	-- Force policy to be active for the owner of the table
 	EXECUTE format('ALTER TABLE pgtt_schema.pgtt_%s FORCE ROW LEVEL SECURITY', tb_name);
@@ -191,9 +187,7 @@ BEGIN
 	IF preserved THEN
 		EXECUTE format('CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=get_session_id()', tb_name, column_list, tb_name);
 	ELSE
-		-- カスタマイズ：
-		-- EXECUTE format('CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=get_session_id() AND xmin::text = txid_current()::text', tb_name, column_list, tb_name);
-		EXECUTE format('CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=get_session_id() AND %s.pgtt_txid = txid_current()::text', tb_name, column_list, tb_name);
+		EXECUTE format('CREATE VIEW %s WITH (security_barrier) AS SELECT %s from pgtt_schema.pgtt_%s WHERE pgtt_sessid=get_session_id() AND xmin::text = txid_current()::text', tb_name, column_list, tb_name);
 	END IF;
 
 	-- Set owner of the view to current user, not the function definer (superuser)
@@ -229,19 +223,15 @@ CREATE FUNCTION pgtt_schema.pgtt_drop_table (tb_name name)
 RETURNS boolean
 AS $$
 BEGIN
-  BEGIN
         -- Unregister the table/view relation from pgtt_schema.pgtt_global_temp table.
         EXECUTE format('DELETE FROM pgtt_schema.pgtt_global_temp WHERE relid=%s',
                 (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON (c.relnamespace = n.oid) WHERE c.relname = 'pgtt_'||tb_name AND n.nspname = 'pgtt_schema'));
-  EXCEPTION
-  WHEN OTHERS THEN
-    NULL;
-  END;
-  -- Compute the query to remove the global temporary table and
-  -- related indexes, with CASCADE associated view will be removed.
-  EXECUTE format('DROP TABLE IF EXISTS pgtt_schema.pgtt_%s CASCADE', tb_name);
 
-  RETURN true;
+	-- Compute the query to remove the global temporary table and
+	-- related indexes, with CASCADE associated view will be removed.
+	EXECUTE format('DROP TABLE IF EXISTS pgtt_schema.pgtt_%s CASCADE', tb_name);
+
+	RETURN true;
 END;
 $$
 LANGUAGE plpgsql SECURITY DEFINER;
